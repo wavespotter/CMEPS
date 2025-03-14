@@ -3,6 +3,7 @@ project(cmeps Fortran)
 set(SRCFILES esmFldsExchange_cesm_mod.F90 med_fraction_mod.F90
               med_methods_mod.F90 med_phases_prep_ice_mod.F90
               med_phases_restart_mod.F90 esmFldsExchange_hafs_mod.F90
+              esmFldsExchange_sofar_mod.F90
               med_internalstate_mod.F90 med_phases_aofluxes_mod.F90
               med_phases_prep_lnd_mod.F90
               esmFldsExchange_ufs_mod.F90 med_io_mod.F90
@@ -28,11 +29,13 @@ endforeach()
 add_library(cmeps ${SRCFILES})
 
 if(BLD_STANDALONE)
+  add_dependencies(cmeps shared)
   add_dependencies(cmeps cmeps_share)
 endif()
 
 target_include_directories (cmeps PUBLIC ${ESMF_F90COMPILEPATHS})
 target_include_directories (cmeps PUBLIC "${CMAKE_BINARY_DIR}/ufs")
+target_include_directories (cmeps PUBLIC "${CMAKE_BINARY_DIR}/shared")
 target_include_directories (cmeps PUBLIC ${PIO_Fortran_INCLUDE_DIR})
 
 install(TARGETS cmeps

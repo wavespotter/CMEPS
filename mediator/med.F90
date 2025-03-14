@@ -12,7 +12,7 @@ module MED
   ! the run sequence provided by freeFormat, this loop becomes the driver
   ! loop level directly. Therefore, setting the timeStep or runDuration
   ! for the outer most time loop results in modifying the driver clock
-  ! itself. However, for cases with cocnatenated loops on the upper level
+  ! itself. However, for cases with concatenated loops on the upper level
   ! of the run sequence in freeFormat, a single outer loop is added
   ! automatically during ingestion, and the driver clock is used for this
   ! loop instead.
@@ -43,6 +43,7 @@ module MED
   use med_internalstate_mod    , only : ncomps, compname
   use med_internalstate_mod    , only : compmed, compatm, compocn, compice, complnd, comprof, compwav, compglc
   use med_internalstate_mod    , only : coupling_mode, aoflux_code, aoflux_ccpp_suite, write_dststatus
+  use med_internalstate_mod    , only : srcMaskAtm, dstMaskAtm, srcMaskWav, dstMaskWav
   use esmFlds                  , only : med_fldList_GetocnalbfldList, med_fldList_type
   use esmFlds                  , only : med_fldList_GetNumFlds, med_fldList_GetFldNames, med_fldList_GetFldInfo
   use esmFlds                  , only : med_fldList_Document_Mapping, med_fldList_Document_Merging
@@ -50,6 +51,7 @@ module MED
   use esmFldsExchange_ufs_mod  , only : esmFldsExchange_ufs
   use esmFldsExchange_cesm_mod , only : esmFldsExchange_cesm
   use esmFldsExchange_hafs_mod , only : esmFldsExchange_hafs
+  use esmFldsExchange_sofar_mod, only : esmFldsExchange_sofar
   use med_phases_profile_mod   , only : med_phases_profile_finalize
   use shr_log_mod              , only : shr_log_error
   
@@ -629,8 +631,7 @@ contains
     endif
 
     ! Obtain verbosity level
-    call ESMF_AttributeGet(gcomp, name="Verbosity", value=cvalue, defaultValue="max", &
-         convention="NUOPC", purpose="Instance", rc=rc)
+    call ESMF_AttributeGet(gcomp, name="Verbosity", value=cvalue, defaultValue="max", convention="NUOPC", purpose="Instance", rc=rc)
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
     if (maintask) then
        write(logunit,'(a)')trim(subname)//": Mediator verbosity is set to "//trim(cvalue)
@@ -693,6 +694,7 @@ contains
     character(len=CS)   :: transferOffer
     character(len=CS)   :: cvalue
     character(len=8)    :: cnum
+    character(len=CX)   :: msgString
     type(InternalState) :: is_local
     type(med_fldlist_type), pointer :: fldListFr, fldListTo
     type(med_fldList_entry_type), pointer :: fld
@@ -826,6 +828,55 @@ contains
        write(logunit,*)
     end if
 
+    ! Get srcMask and dstMask for wave and atmosphere 
+    if (trim(coupling_mode) == 'sofar.aw') then
+
+       ! srcMaskAtm
+       call NUOPC_CompAttributeGet(gcomp, name='srcMaskAtm', value=cvalue, isPresent=isPresent, isSet=isSet, rc=rc)
+       if (chkerr(rc,__LINE__,u_FILE_u)) return
+       if (isPresent .and. isSet) then
+          call ESMF_LogWrite('srcMaskAtm = '// trim(cvalue), ESMF_LOGMSG_INFO)
+          read(cvalue, '(i10)') srcMaskAtm
+          if (maintask) then
+             write(logunit,'(a)')trim(subname)//' srcMaskAtm is set to '//trim(cvalue)
+          end if
+       end if
+
+       ! dstMaskAtm
+       call NUOPC_CompAttributeGet(gcomp, name='dstMaskAtm', value=cvalue, isPresent=isPresent, isSet=isSet, rc=rc)
+       if (chkerr(rc,__LINE__,u_FILE_u)) return
+       if (isPresent .and. isSet) then
+          call ESMF_LogWrite('dstMaskAtm = '// trim(cvalue), ESMF_LOGMSG_INFO)
+          read(cvalue, '(i10)') dstMaskAtm
+          if (maintask) then
+             write(logunit,'(a)')trim(subname)//' dstMaskAtm is set to '//trim(cvalue)
+          end if
+       end if
+
+       ! srcMaskWav
+       call NUOPC_CompAttributeGet(gcomp, name='srcMaskWav', value=cvalue, isPresent=isPresent, isSet=isSet, rc=rc)
+       if (chkerr(rc,__LINE__,u_FILE_u)) return
+       if (isPresent .and. isSet) then
+          call ESMF_LogWrite('srcMaskWav = '// trim(cvalue), ESMF_LOGMSG_INFO)
+          read(cvalue, '(i10)') srcMaskWav
+          if (maintask) then
+             write(logunit,'(a)')trim(subname)//' srcMaskWav is set to '//trim(cvalue)
+          end if
+       end if
+
+       ! dstMaskWav
+       call NUOPC_CompAttributeGet(gcomp, name='dstMaskWav', value=cvalue, isPresent=isPresent, isSet=isSet, rc=rc)
+       if (chkerr(rc,__LINE__,u_FILE_u)) return
+       if (isPresent .and. isSet) then
+          call ESMF_LogWrite('dstMaskWav = '// trim(cvalue), ESMF_LOGMSG_INFO)
+          read(cvalue, '(i10)') dstMaskWav
+          if (maintask) then
+             write(logunit,'(a)')trim(subname)//' dstMaskWav is set to '//trim(cvalue)
+          end if
+       end if
+
+    end if
+
     ! Initialize memory for fldlistTo and fldlistFr - this is need for the calls below for the
     ! advertise phase
     call med_fldlist_init1(ncomps)
@@ -838,6 +889,9 @@ contains
        if (ChkErr(rc,__LINE__,u_FILE_u)) return
     else if (coupling_mode(1:4) == 'hafs') then
        call esmFldsExchange_hafs(gcomp, phase='advertise', rc=rc)
+       if (ChkErr(rc,__LINE__,u_FILE_u)) return
+    else if (coupling_mode(1:5) == 'sofar') then
+       call esmFldsExchange_sofar(gcomp, phase='advertise', rc=rc)
        if (ChkErr(rc,__LINE__,u_FILE_u)) return
     else
        call shr_log_error(trim(coupling_mode)//' is not a valid coupling_mode', rc=rc)
@@ -1844,6 +1898,9 @@ contains
       else if (coupling_mode(1:4) == 'hafs') then
          call esmFldsExchange_hafs(gcomp, phase='initialize', rc=rc)
          if (ChkErr(rc,__LINE__,u_FILE_u)) return
+      else if (coupling_mode(1:5) == 'sofar') then
+         call esmFldsExchange_sofar(gcomp, phase='initialize', rc=rc)
+         if (ChkErr(rc,__LINE__,u_FILE_u)) return
       end if
 
       if (maintask) then
@@ -1962,9 +2019,13 @@ contains
       ! the correct timestamps, which also indicates that the actual
       ! data has been transferred reliably, and CMEPS can safely use it.
 
+      call ESMF_LogWrite(trim(subname)//": done first call.", ESMF_LOGMSG_INFO)
+
       RETURN
 
     endif  ! end first_call if-block
+
+    call ESMF_LogWrite(trim(subname)//": called beyond first call", ESMF_LOGMSG_INFO)
 
     !----------------------------------------------------------
     ! Create FBfrac field bundles and initialize fractions

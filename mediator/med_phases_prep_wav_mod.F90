@@ -40,6 +40,7 @@ contains
 
     use ESMF            , only : ESMF_GridComp, ESMF_SUCCESS
     use med_methods_mod , only : FB_Init  => med_methods_FB_init
+    use ESMF            , only : ESMF_LogWrite, ESMF_LOGMSG_INFO
 
     ! input/output variables
     type(ESMF_GridComp)  :: gcomp
@@ -51,6 +52,9 @@ contains
     !---------------------------------------
 
     rc = ESMF_SUCCESS
+    if (dbug_flag > 20) then 
+        call ESMF_LogWrite(trim(subname)//": called", ESMF_LOGMSG_INFO)
+    endif
 
     ! Get the internal state
     nullify(is_local%wrap)
@@ -58,7 +62,7 @@ contains
     if (chkErr(rc,__LINE__,u_FILE_u)) return
 
     if (maintask) then
-       write(logunit,'(a)') trim(subname)//' initializing wave export accumulation FB for '
+       write(logunit,'(a)') trim(subname)//' initializing wave export accumulation FB' ! for '
     end if
     call FB_Init(is_local%wrap%FBExpAccumWav, is_local%wrap%flds_scalar_name, &
          STgeom=is_local%wrap%NStateExp(compwav), STflds=is_local%wrap%NStateExp(compwav), &
@@ -66,6 +70,10 @@ contains
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
     call FB_reset(is_local%wrap%FBExpAccumWav, value=czero, rc=rc)
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
+    
+    if (dbug_flag > 20) then 
+        call ESMF_LogWrite(trim(subname)//": done", ESMF_LOGMSG_INFO)
+    endif
 
   end subroutine med_phases_prep_wav_init
 
@@ -86,7 +94,7 @@ contains
 
     call t_startf('MED:'//subname)
     if (dbug_flag > 20) then
-       call ESMF_LogWrite(subname//' called', ESMF_LOGMSG_INFO)
+       call ESMF_LogWrite(subname//': called', ESMF_LOGMSG_INFO)
     end if
     rc = ESMF_SUCCESS
     call memcheck(subname, 5, maintask)
