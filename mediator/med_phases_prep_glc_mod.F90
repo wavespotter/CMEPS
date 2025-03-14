@@ -7,7 +7,7 @@ module med_phases_prep_glc_mod
   use med_kind_mod          , only : CX=>SHR_KIND_CX, CS=>SHR_KIND_CS, CL=>SHR_KIND_CL, R8=>SHR_KIND_R8
   use NUOPC                 , only : NUOPC_CompAttributeGet
   use NUOPC_Model           , only : NUOPC_ModelGet
-  use ESMF                  , only : ESMF_LogWrite, ESMF_LOGMSG_INFO, ESMF_LOGMSG_ERROR, ESMF_SUCCESS, ESMF_FAILURE
+  use ESMF                  , only : ESMF_LogWrite, ESMF_LOGMSG_INFO, ESMF_SUCCESS, ESMF_FAILURE
   use ESMF                  , only : ESMF_VM, ESMF_VMGet, ESMF_VMAllReduce, ESMF_REDUCE_SUM, ESMF_REDUCE_MAX
   use ESMF                  , only : ESMF_Clock, ESMF_ClockCreate, ESMF_ClockIsCreated
   use ESMF                  , only : ESMF_ClockGetAlarm, ESMF_ClockAdvance, ESMF_ClockGet
@@ -22,7 +22,7 @@ module med_phases_prep_glc_mod
   use ESMF                  , only : ESMF_DYNAMICMASK, ESMF_DynamicMaskSetR8R8R8, ESMF_DYNAMICMASKELEMENTR8R8R8
   use ESMF                  , only : ESMF_FieldRegrid, ESMF_REGION_EMPTY
   use med_internalstate_mod , only : complnd, compocn,  mapbilnr, mapconsd, compname, compglc
-  use med_internalstate_mod , only : InternalState, maintask, logunit
+  use med_internalstate_mod , only : InternalState, maintask, logunit, map_fracname_lnd2glc
   use med_map_mod           , only : med_map_routehandles_init, med_map_rh_is_created
   use med_map_mod           , only : med_map_field_normalized, med_map_field
   use med_constants_mod     , only : dbug_flag        => med_constants_dbug_flag
@@ -39,12 +39,13 @@ module med_phases_prep_glc_mod
   use med_methods_mod       , only : field_getdata1d  => med_methods_Field_getdata1d
   use med_methods_mod       , only : fldchk           => med_methods_FB_FldChk
   use med_utils_mod         , only : chkerr           => med_utils_ChkErr
-  use med_time_mod          , only : med_time_alarmInit
+  use nuopc_shr_methods     , only : alarmInit
   use glc_elevclass_mod     , only : glc_get_num_elevation_classes
   use glc_elevclass_mod     , only : glc_get_elevation_classes
   use glc_elevclass_mod     , only : glc_get_fractional_icecov
   use perf_mod              , only : t_startf, t_stopf
-
+  use shr_log_mod           , only : shr_log_error
+  
   implicit none
   private
 
@@ -135,7 +136,6 @@ contains
     type(ESMF_Mesh)     :: mesh_o
     type(ESMF_Field)    :: lfield
     character(len=CS)   :: glc_renormalize_smb
-    logical             :: glc_coupled_fluxes
     integer             :: ungriddedUBound_output(1) ! currently the size must equal 1 for rank 2 fieldds
     character(len=*),parameter  :: subname=' (med_phases_prep_glc_init) '
     !---------------------------------------
@@ -223,9 +223,8 @@ contains
 
           ! create route handle if it has not been created
           if (.not. med_map_RH_is_created(is_local%wrap%RH(complnd,compglc(ns),:),mapbilnr,rc=rc)) then
-             call ESMF_LogWrite(trim(subname)//" mapbilnr is not created for lnd->glc mapping", &
-                  ESMF_LOGMSG_ERROR, line=__LINE__, file=u_FILE_u)
-             rc = ESMF_FAILURE
+             call shr_log_error(trim(subname)//" mapbilnr is not created for lnd->glc mapping", &
+                  line=__LINE__, file=u_FILE_u, rc=rc)
              return
           end if
        end do
@@ -234,30 +233,14 @@ contains
        call NUOPC_CompAttributeGet(gcomp, name='glc_renormalize_smb', value=glc_renormalize_smb, rc=rc)
        if (chkerr(rc,__LINE__,u_FILE_u)) return
 
-       ! TODO: talk to Bill Sacks to determine if this is the correct logic
-       glc_coupled_fluxes = is_local%wrap%med_coupling_active(compglc(1),complnd)
-       ! Note glc_coupled_fluxes should be false in the no_evolve cases
-       ! Goes back to the zero-gcm fluxes variable - if zero-gcm fluxes is true than do not renormalize
-       ! The user can set this to true in an evolve cases
-
        select case (glc_renormalize_smb)
        case ('on')
           smb_renormalize = .true.
        case ('off')
           smb_renormalize = .false.
-       case ('on_if_glc_coupled_fluxes')
-          if (.not. glc_coupled_fluxes) then
-             ! Do not renormalize if med_coupling_active is not true for compglc->complnd
-             ! In this case, conservation is not important
-             smb_renormalize = .false.
-          else
-             smb_renormalize = .true.
-          end if
        case default
-          write(logunit,*) subname,' ERROR: unknown value for glc_renormalize_smb: ', trim(glc_renormalize_smb)
-          call ESMF_LogWrite(trim(subname)//' ERROR: unknown value for glc_renormalize_smb: '// trim(glc_renormalize_smb), &
-               ESMF_LOGMSG_ERROR, line=__LINE__, file=__FILE__)
-          rc = ESMF_FAILURE
+          call shr_log_error(trim(subname)//' ERROR: unknown value for glc_renormalize_smb: '// trim(glc_renormalize_smb), &
+               line=__LINE__, file=__FILE__, rc=rc)
           return
        end select
        if (maintask) then
@@ -346,9 +329,8 @@ contains
        ! create route handle if it has not been created
        do ns = 1,is_local%wrap%num_icesheets
           if (.not. med_map_RH_is_created(is_local%wrap%RH(compocn,compglc(ns),:),mapbilnr,rc=rc)) then
-             call ESMF_LogWrite(trim(subname)//" mapbilnr is not created for ocn->glc mapping", &
-                  ESMF_LOGMSG_ERROR, line=__LINE__, file=u_FILE_u)
-             rc = ESMF_FAILURE
+             call shr_log_error(trim(subname)//" mapbilnr is not created for ocn->glc mapping", &
+                  line=__LINE__, file=u_FILE_u, rc=rc)
              return
           end if
        end do
@@ -547,7 +529,7 @@ contains
        call NUOPC_CompAttributeGet(gcomp, name="glc_avg_period", value=glc_avg_period, rc=rc)
        if (ChkErr(rc,__LINE__,u_FILE_u)) return
        if (trim(glc_avg_period) == 'yearly') then
-          call med_time_alarmInit(prepglc_clock, glc_avg_alarm, 'yearly', alarmname='alarm_glc_avg', rc=rc)
+          call alarmInit(prepglc_clock, glc_avg_alarm, 'yearly', alarmname='alarm_glc_avg', rc=rc)
           if (ChkErr(rc,__LINE__,u_FILE_u)) return
           if (maintask) then
              write(logunit,'(a,i10)') trim(subname)//&
@@ -557,7 +539,7 @@ contains
           call NUOPC_CompAttributeGet(gcomp, name="glc_cpl_dt", value=cvalue, rc=rc)
           if (ChkErr(rc,__LINE__,u_FILE_u)) return
           read(cvalue,*) glc_cpl_dt
-          call med_time_alarmInit(prepglc_clock, glc_avg_alarm, 'nseconds', opt_n=glc_cpl_dt, alarmname='alarm_glc_avg', rc=rc)
+          call alarmInit(prepglc_clock, glc_avg_alarm, 'nseconds', opt_n=glc_cpl_dt, alarmname='alarm_glc_avg', rc=rc)
           if (ChkErr(rc,__LINE__,u_FILE_u)) return
           if (maintask) then
              write(logunit,'(a,i10)') trim(subname)//&
@@ -812,8 +794,8 @@ contains
     if (ChkErr(rc,__LINE__,u_FILE_u)) return
 
     ! get land fraction field on land mesh
-    call ESMF_FieldBundleGet(is_local%wrap%FBFrac(complnd), 'lfrac', field=field_lfrac_l, rc=rc)
-    if (ChkErr(rc,__LINE__,u_FILE_u)) return
+    call ESMF_FieldBundleGet(is_local%wrap%FBFrac(complnd), fieldName=map_fracname_lnd2glc, field=field_lfrac_l, rc=rc)
+    if (chkerr(rc,__LINE__,u_FILE_u)) return
 
     ! map accumlated land fields to each ice sheet (normalize by the land fraction in the mapping)
     do ns = 1,is_local%wrap%num_icesheets
@@ -1052,7 +1034,7 @@ contains
     real(r8) , pointer  :: frac_l_ec(:,:)  ! EC fractions (Sg_ice_covered) on land grid
     real(r8) , pointer  :: icemask_g(:)    ! icemask on glc grid
     real(r8) , pointer  :: icemask_l(:)    ! icemask on land grid
-    real(r8) , pointer  :: lfrac(:)        ! land fraction on land grid
+    real(r8) , pointer  :: lndfrac(:)      ! land fraction on land grid
     real(r8) , pointer  :: dataptr1d(:)    ! temporary 1d pointer
     integer             :: ec              ! loop index over elevation classes
     integer             :: n
@@ -1066,7 +1048,7 @@ contains
     ! renormalization factors (should be close to 1, e.g. in range 0.95 to 1.05)
     real(r8) :: accum_renorm_factor ! ratio between global accumulation on the two grids
     real(r8) :: ablat_renorm_factor ! ratio between global ablation on the two grids
-    real(r8) :: effective_area      ! grid cell area multiplied by min(lfrac,icemask_l).
+    real(r8) :: effective_area      ! grid cell area multiplied by min(lndfrac,icemask_l).
     real(r8), pointer :: area_g(:)  ! areas on glc grid
     character(len=*), parameter  :: subname=' (renormalize_smb) '
     !---------------------------------------------------------------
@@ -1146,8 +1128,8 @@ contains
     call field_getdata2d(field_frac_l_ec, frac_l_ec, rc)
     if (chkErr(rc,__LINE__,u_FILE_u)) return
 
-    ! determine fraction on land grid, lfrac(:)
-    call fldbun_getdata1d(is_local%wrap%FBFrac(complnd), 'lfrac', lfrac, rc)
+    ! determine fraction on land grid, lndfrac(:)
+    call fldbun_getdata1d(is_local%wrap%FBFrac(complnd), map_fracname_lnd2glc, lndfrac, rc)
     if (chkErr(rc,__LINE__,u_FILE_u)) return
 
     ! get qice_l_ec
@@ -1156,9 +1138,9 @@ contains
 
     local_accum_lnd(1) = 0.0_r8
     local_ablat_lnd(1) = 0.0_r8
-    do n = 1, size(lfrac)
+    do n = 1, size(lndfrac)
        ! Calculate effective area for sum -  need the mapped icemask_l
-       effective_area = min(lfrac(n), icemask_l(n)) * is_local%wrap%mesh_info(complnd)%areas(n)
+       effective_area = min(lndfrac(n), icemask_l(n)) * is_local%wrap%mesh_info(complnd)%areas(n)
        if (effective_area > 0.0_r8) then
           do ec = 1, ungriddedCount
              if (qice_l_ec(ec,n) >= 0.0_r8) then
