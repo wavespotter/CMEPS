@@ -2296,6 +2296,7 @@ contains
     real(R8), pointer :: farrayptr(:,:)
     real(r8)          :: tmp(1)
     character(len=*), parameter :: subname='(med_methods_State_GetScalar)'
+    character(ESMF_MAXSTR) :: msgString    ! Sofar added
     ! ----------------------------------------------
 
     rc = ESMF_SUCCESS

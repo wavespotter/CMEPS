@@ -39,10 +39,12 @@ if (NOT DEFINED MPILIB OR NOT ${MPILIB} STREQUAL "mpi-serial")
   find_package(MPI REQUIRED)
 endif()
 
+message(BLD_STANDALONE="${BLD_STANDALONE}")
 if(BLD_STANDALONE)
   add_subdirectory(ufs)
   list(APPEND EXTRA_LIBS cmeps_share)
   list(APPEND EXTRA_INCLUDES "${CMAKE_BINARY_DIR}/ufs")
 endif()
 
+add_subdirectory(shared)
 add_subdirectory(mediator)
